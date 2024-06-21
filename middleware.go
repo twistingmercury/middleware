@@ -82,12 +82,12 @@ func Initialize(registry *prometheus.Registry, namespace, apiname string) error 
 	reg = registry
 	nspace = namespace
 	apiName = apiname
-	concurrentCalls, totalCalls, callDuration = initApiMetrics()
+	concurrentCalls, totalCalls, callDuration = Metrics()
 	reg.MustRegister(concurrentCalls, totalCalls, callDuration)
 	return nil
 }
 
-func initApiMetrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
+func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
 	concurentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
 	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: nspace,
@@ -117,13 +117,14 @@ func initApiMetrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus
 func Telemetry() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		savedCtx := c.Request.Context()
-		defer func() {
-			c.Request = c.Request.WithContext(savedCtx)
-		}()
+		//defer func() {
+		//	c.Request = c.Request.WithContext(savedCtx)
+		//}()
 
 		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
 		parentCtx := tracing.ExtractContext(savedCtx, propagation.HeaderCarrier(c.Request.Header))
-		_, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
+		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
+		c.Request = c.Request.WithContext(childCtx)
 		defer span.End()
 
 		before := time.Now()
