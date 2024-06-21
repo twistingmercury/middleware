@@ -116,13 +116,8 @@ func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.Histog
 // Telemetry returns middleware that will instrument and trace incoming requests.
 func Telemetry() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		savedCtx := c.Request.Context()
-		//defer func() {
-		//	c.Request = c.Request.WithContext(savedCtx)
-		//}()
-
 		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
-		parentCtx := tracing.ExtractContext(savedCtx, propagation.HeaderCarrier(c.Request.Header))
+		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
 		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
 		c.Request = c.Request.WithContext(childCtx)
 		defer span.End()
