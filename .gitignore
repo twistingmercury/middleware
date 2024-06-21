@@ -69,5 +69,6 @@ $RECYCLE.BIN/
 out/
 .idea/
 .vscode/
+.fleet/
 
 /venv/
