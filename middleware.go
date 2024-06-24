@@ -21,9 +21,9 @@ import (
 )
 
 const ( // for metric vectors
-	method = "http_method"
-	status = "http_status"
-	path   = "http_path"
+	methodLabel = "http_method"
+	statusLabel = "http_status"
+	pathLabel   = "http_path"
 )
 
 const ( // for user agent properties and values
@@ -87,28 +87,29 @@ func Initialize(registry *prometheus.Registry, namespace, apiname string) error 
 	return nil
 }
 
+// Metrics provides the prometheus metrics that are to be tracked.
 func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
 	concurentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
 	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: nspace,
 		Name:      concurentCallsName,
-		Help:      "the count of concurrent calls to the APIs, grouped by API name, path, and response code"},
-		[]string{path, method})
+		Help:      "the count of concurrent calls to the APIs, grouped by path and http method"},
+		[]string{pathLabel, methodLabel})
 
 	totalCallsName := normalize(fmt.Sprintf("%s_total_calls", apiName))
 	totalCalls := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: nspace,
 		Name:      totalCallsName,
-		Help:      "The count of all call to the API, grouped by API name, path, and response code"},
-		[]string{path, method, status})
+		Help:      "The count of all call to the API, grouped by path, http method, and status code"},
+		[]string{pathLabel, methodLabel, statusLabel})
 
 	callDurationName := normalize(fmt.Sprintf("%s_call_duration", apiName))
 	callDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: nspace,
 		Name:      callDurationName,
-		Help:      "The duration in milliseconds calls to the API, grouped by API name, path, and response code",
+		Help:      "The duration in milliseconds calls to the API, grouped by path, http method, and status code",
 		Buckets:   prometheus.ExponentialBuckets(0.1, 1.5, 5)},
-		[]string{path, method, status})
+		[]string{pathLabel, methodLabel, statusLabel})
 
 	return concurrentCalls, totalCalls, callDuration
 }
@@ -129,17 +130,19 @@ func Telemetry() gin.HandlerFunc {
 		logRequest(span.SpanContext(), c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
+
+		path := c.Request.URL.Path
+		method := c.Request.Method
 		statusCode := strconv.Itoa(c.Writer.Status())
-		defer func() {
-			concurrentCalls.WithLabelValues(path, method).Dec()
-			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
-			totalCalls.WithLabelValues(path, method, statusCode).Inc()
-		}()
+
+		concurrentCalls.WithLabelValues(path, method).Dec()
+		callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+		totalCalls.WithLabelValues(path, method, statusCode).Inc()
 	}
 }
 
-// SpanStatus returns the OpenTelemetry status code as defined in
-// go.opentelemetry.io/old_elemetry/codes and a brief description for a given HTTP status code.
+// SpanStatus returns the OpenTelemetry statusLabel code as defined in
+// go.opentelemetry.io/old_elemetry/codes and a brief description for a given HTTP statusLabel code.
 func SpanStatus(status int) (code otelCodes.Code, desc string) {
 	switch {
 	case status >= 200 && status < 300:
