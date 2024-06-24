@@ -47,11 +47,11 @@ const ( // for user agent properties and values
 const ( // for http request properties and header values
 	Http            = "http"
 	Https           = "https"
-	HttpMethod      = "http.request.methodLabel"
-	HttpPath        = "http.request.pathLabel"
+	HttpMethod      = "http.request.method"
+	HttpPath        = "http.request.path"
 	HttpRemoteAddr  = "http.request.remoteAddr"
 	HttpRequestHost = "http.request.host"
-	HttpStatus      = "http.response.statusLabel"
+	HttpStatus      = "http.response.status"
 	HttpLatency     = "http.response.latency"
 	TLSVersion      = "http.tls.serviceVersion"
 	HttpScheme      = "http.scheme"
@@ -87,6 +87,7 @@ func Initialize(registry *prometheus.Registry, namespace, apiname string) error 
 	return nil
 }
 
+// Metrics provides the prometheus metrics that are to be tracked.
 func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
 	concurentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
 	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -122,9 +123,6 @@ func Telemetry() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(childCtx)
 		defer span.End()
 
-		path := c.Request.URL.Path
-		method := c.Request.Method
-
 		before := time.Now()
 		c.Next()
 		elapsedTime := float64(time.Since(before)) / float64(time.Millisecond)
@@ -132,12 +130,14 @@ func Telemetry() gin.HandlerFunc {
 		logRequest(span.SpanContext(), c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
+
+		path := c.Request.URL.Path
+		method := c.Request.Method
 		statusCode := strconv.Itoa(c.Writer.Status())
-		defer func() {
-			concurrentCalls.WithLabelValues(path, method).Dec()
-			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
-			totalCalls.WithLabelValues(path, method, statusCode).Inc()
-		}()
+
+		concurrentCalls.WithLabelValues(path, method).Dec()
+		callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+		totalCalls.WithLabelValues(path, method, statusCode).Inc()
 	}
 }
 
