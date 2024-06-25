@@ -19,7 +19,7 @@ go get github.com/twistingmercury/telemetry/middleware
 
 ## Usage
 
-For a working example, view and run the example: [_example/main.go](_example/main.go). In general, take the following steps:
+Please visit [middleware-example](https://github.com/twistingmercury/middleware-example) for a comprehensive example of how to utilize both the middleware as well as the [twistingmercury/telemetry](https://github.com/twistingmercury/telemetry) package.
 
 1. [Initialize the logging package.
 2. Initialize the metrics package.
@@ -36,6 +36,7 @@ The Gin Middleware package generates the following telemetry data for the gin ha
 
 - Request duration metric: Measures the duration of each incoming request in milliseconds.
 - Request count metric: Counts the number of incoming requests.
+- Current request gauge metric: the current number of active requests.
 - Request trace: Creates a trace for each incoming request, including span information.
 - Detailed request information: Parses the user agent and request headers to include additional attributes in the telemetry data.
 
