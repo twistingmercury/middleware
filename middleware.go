@@ -117,6 +117,17 @@ func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.Histog
 // Telemetry returns middleware that will instrument and trace incoming requests.
 func Telemetry() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+		var elapsedTime float64
+		var statusCode string
+		concurrentCalls.WithLabelValues(path, method).Inc()
+		defer func() {
+			concurrentCalls.WithLabelValues(path, method).Dec()
+			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+			totalCalls.WithLabelValues(path, method, statusCode).Inc()
+		}()
+
 		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
 		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
 		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
@@ -125,19 +136,13 @@ func Telemetry() gin.HandlerFunc {
 
 		before := time.Now()
 		c.Next()
-		elapsedTime := float64(time.Since(before)) / float64(time.Millisecond)
+		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
 
 		logRequest(span.SpanContext(), c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
 
-		path := c.Request.URL.Path
-		method := c.Request.Method
-		statusCode := strconv.Itoa(c.Writer.Status())
-
-		concurrentCalls.WithLabelValues(path, method).Dec()
-		callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
-		totalCalls.WithLabelValues(path, method, statusCode).Inc()
+		statusCode = strconv.Itoa(c.Writer.Status())
 	}
 }
 
