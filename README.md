@@ -14,7 +14,7 @@ The twistingmercury/middleware package is a Go library that provides middleware 
 ## Installation
 
 ```bash
-go get github.com/twistingmercury/telemetry/middleware
+go get github.com/twistingmercury/middleware
 ```
 
 ## Usage
