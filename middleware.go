@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,31 +67,49 @@ var (
 	nspace          string
 )
 
-// Initialize preps the middleware.
-func Initialize(registry *prometheus.Registry, namespace, apiname string) error {
+// GetMetricsMiddleware initializes and returns metrics middleware
+func GetMetricsMiddleware(registry *prometheus.Registry, namespace string, apiname string, options MetricsOptions) (gin.HandlerFunc, error) {
 	switch {
 	case registry == nil:
-		return errors.New("registry is nil")
+		return nil, errors.New("registry is nil")
 	case strings.TrimSpace(namespace) == "":
-		return errors.New("namespace is empty")
+		return nil, errors.New("namespace is empty")
 	case strings.TrimSpace(apiname) == "":
-		return errors.New("apiname is empty")
+		return nil, errors.New("apiname is empty")
 	}
 
 	reg = registry
 	nspace = namespace
 	apiName = apiname
+
 	concurrentCalls, totalCalls, callDuration = Metrics()
 	reg.MustRegister(concurrentCalls, totalCalls, callDuration)
-	return nil
+
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		var elapsedTime float64
+		var statusCode string
+		concurrentCalls.WithLabelValues(path, method).Inc()
+		defer func() {
+			concurrentCalls.WithLabelValues(path, method).Dec()
+			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+			totalCalls.WithLabelValues(path, method, statusCode).Inc()
+		}()
+
+		before := time.Now()
+		c.Next()
+		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
+	}, nil
 }
 
 // Metrics provides the prometheus metrics that are to be tracked.
 func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
-	concurentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
+	concurrentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
 	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: nspace,
-		Name:      concurentCallsName,
+		Name:      concurrentCallsName,
 		Help:      "the count of concurrent calls to the APIs, grouped by path and http method"},
 		[]string{pathLabel, methodLabel})
 
@@ -114,19 +131,18 @@ func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.Histog
 	return concurrentCalls, totalCalls, callDuration
 }
 
-// Telemetry returns middleware that will instrument and trace incoming requests.
-func Telemetry() gin.HandlerFunc {
+// GetTracingMiddleware initializes and returns tracing middleware
+func GetTracingMiddleware(options TracingOptions) (gin.HandlerFunc, error) {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		method := c.Request.Method
+
+		_, pathFound := options.ExcludedPaths[strings.ToLower(path)]
+		if pathFound {
+			c.Next()
+			return
+		}
+
 		var elapsedTime float64
-		var statusCode string
-		concurrentCalls.WithLabelValues(path, method).Inc()
-		defer func() {
-			concurrentCalls.WithLabelValues(path, method).Dec()
-			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
-			totalCalls.WithLabelValues(path, method, statusCode).Inc()
-		}()
 
 		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
 		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
@@ -141,9 +157,7 @@ func Telemetry() gin.HandlerFunc {
 		logRequest(span.SpanContext(), c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
-
-		statusCode = strconv.Itoa(c.Writer.Status())
-	}
+	}, nil
 }
 
 // SpanStatus returns the OpenTelemetry statusLabel code as defined in
@@ -230,7 +244,7 @@ func logRequest(spanCtx oteltrace.SpanContext, c *gin.Context, elapsedTime float
 		return
 	}
 
-	logging.Info("request ", logAttribs...)
+	logging.Info("request", logAttribs...)
 }
 
 // ParseHeaders parses the headers and returns a map of attribs.

@@ -2,7 +2,9 @@ package middleware_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"github.com/rs/zerolog"
 	"github.com/twistingmercury/middleware"
 	"github.com/twistingmercury/telemetry/logging"
@@ -44,7 +46,7 @@ func initializeTests(t *testing.T) {
 	err = tracing.Initialize(traceExporter, serviceName, serviceVersion, environment)
 	require.NoError(t, err)
 
-	err = metrics.Initialize(namespace, serviceName)
+	err = metrics.Initialize(context.TODO(), namespace, serviceName)
 	require.NoError(t, err)
 }
 
@@ -58,25 +60,28 @@ func TestInitialize(t *testing.T) {
 	initializeTests(t)
 	defer resetTests()
 
-	err = middleware.Initialize(nil, namespace, serviceName)
+	_, err = middleware.GetMetricsMiddleware(nil, namespace, serviceName, middleware.MetricsOptions{})
 	require.Error(t, err)
 
-	err = middleware.Initialize(metrics.Registry(), "", serviceName)
+	_, err = middleware.GetMetricsMiddleware(metrics.Registry(), "", serviceName, middleware.MetricsOptions{})
 	require.Error(t, err)
 
-	err = middleware.Initialize(metrics.Registry(), namespace, " ")
+	_, err = middleware.GetMetricsMiddleware(metrics.Registry(), namespace, " ", middleware.MetricsOptions{})
 	require.Error(t, err)
 }
 
 func TestGinOTelMiddleware(t *testing.T) {
 	initializeTests(t)
 	defer resetTests()
-	err := middleware.Initialize(metrics.Registry(), namespace, serviceName)
+	metricsMiddleware, err := middleware.GetMetricsMiddleware(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{})
+	require.NoError(t, err)
+	tracingMiddleware, err := middleware.GetTracingMiddleware(middleware.TracingOptions{})
 	require.NoError(t, err)
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.Telemetry())
+	
+	r.Use(metricsMiddleware, tracingMiddleware)
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -90,10 +95,69 @@ func TestGinOTelMiddleware(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	checkLog(t)
+	checkLog(t, "info")
 }
 
-func checkLog(t *testing.T) {
+func TestGinOTelMiddlewareInternalServerError(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+	metricsMiddleware, err := middleware.GetMetricsMiddleware(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{})
+	require.NoError(t, err)
+	tracingMiddleware, err := middleware.GetTracingMiddleware(middleware.TracingOptions{})
+	require.NoError(t, err)
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(metricsMiddleware, tracingMiddleware)
+	r.GET("/test", func(c *gonic.Context) {
+		c.Errors = []*gonic.Error{
+			{
+				Err:  errors.New("test error"),
+				Type: 0,
+				Meta: nil,
+			}}
+		c.Status(http.StatusInternalServerError)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	checkLog(t, "error")
+}
+
+func TestGinOTelMiddlewareTraceExcludedPath(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+	tracingMiddleware, err := middleware.GetTracingMiddleware(middleware.MakeTracingOptions(middleware.WithExcludedPaths([]string{"/test"})))
+	require.NoError(t, err)
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(tracingMiddleware)
+	r.GET("/test", func(c *gonic.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	logText := lbuffer.String()
+	require.Empty(t, logText)
+}
+
+func checkLog(t *testing.T, expectedLogLevel string) {
 	logText := lbuffer.String()
 	require.NotEmptyf(t, logText, "no logs found")
 
@@ -104,15 +168,15 @@ func checkLog(t *testing.T) {
 
 	require.Contains(t, logEntry, "otel.trace_id")
 	require.Len(t, logEntry["otel.trace_id"], 32)
-	require.NotEqual(t, logEntry["otel.trace_id"], oteltrace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	require.NotEqual(t, oteltrace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, logEntry["otel.trace_id"])
 
 	require.Contains(t, logEntry, "otel.span_id")
 	require.Len(t, logEntry["otel.span_id"], 16)
-	require.NotEqual(t, logEntry["otel.trace_id"], oteltrace.SpanID{0, 0, 0, 0, 0, 0, 0, 0})
-	require.Equal(t, logEntry["level"], "info")
-	require.Equal(t, logEntry["service"], serviceName)
-	require.Equal(t, logEntry["version"], serviceVersion)
-	require.Equal(t, logEntry["environment"], environment)
+	require.NotEqual(t, oteltrace.SpanID{0, 0, 0, 0, 0, 0, 0, 0}, logEntry["otel.trace_id"])
+	require.Equal(t, expectedLogLevel, logEntry["level"])
+	require.Equal(t, serviceName, logEntry["service"])
+	require.Equal(t, serviceVersion, logEntry["version"])
+	require.Equal(t, environment, logEntry["environment"])
 }
 
 func TestSpanStatus(t *testing.T) {
