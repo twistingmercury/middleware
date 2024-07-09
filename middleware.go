@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,61 @@ var (
 	apiName         string
 	nspace          string
 )
+
+// Initialize preps the middleware.
+//
+// Deprecated: use GetMetricsMiddleware and GetTracingMiddleware instead which have the initialization built-in.
+func Initialize(registry *prometheus.Registry, namespace, apiname string) error {
+	switch {
+	case registry == nil:
+		return errors.New("registry is nil")
+	case strings.TrimSpace(namespace) == "":
+		return errors.New("namespace is empty")
+	case strings.TrimSpace(apiname) == "":
+		return errors.New("apiname is empty")
+	}
+
+	reg = registry
+	nspace = namespace
+	apiName = apiname
+	concurrentCalls, totalCalls, callDuration = Metrics()
+	reg.MustRegister(concurrentCalls, totalCalls, callDuration)
+	return nil
+}
+
+// Telemetry returns middleware that will instrument and trace incoming requests.
+//
+// Deprecated: use GetMetricsMiddleware and GetTracingMiddleware to get separated middleware for metrics and tracing.
+func Telemetry() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+		var elapsedTime float64
+		var statusCode string
+		concurrentCalls.WithLabelValues(path, method).Inc()
+		defer func() {
+			concurrentCalls.WithLabelValues(path, method).Dec()
+			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+			totalCalls.WithLabelValues(path, method, statusCode).Inc()
+		}()
+
+		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
+		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
+		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
+		c.Request = c.Request.WithContext(childCtx)
+		defer span.End()
+
+		before := time.Now()
+		c.Next()
+		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
+
+		logRequest(span.SpanContext(), c, elapsedTime)
+		code, desc := SpanStatus(c.Writer.Status())
+		span.SetStatus(code, desc)
+
+		statusCode = strconv.Itoa(c.Writer.Status())
+	}
+}
 
 // GetMetricsMiddleware initializes and returns metrics middleware
 func GetMetricsMiddleware(registry *prometheus.Registry, namespace string, apiname string, options MetricsOptions) (gin.HandlerFunc, error) {
