@@ -70,6 +70,46 @@ func TestInitialize(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDeprecatedInitialize(t *testing.T) {
+	var err error
+	initializeTests(t)
+	defer resetTests()
+
+	err = middleware.Initialize(nil, namespace, serviceName)
+	require.Error(t, err)
+
+	err = middleware.Initialize(metrics.Registry(), "", serviceName)
+	require.Error(t, err)
+
+	err = middleware.Initialize(metrics.Registry(), namespace, " ")
+	require.Error(t, err)
+}
+
+func TestGinOTelDeprecatedTelemetry(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+	err := middleware.Initialize(metrics.Registry(), namespace, serviceName)
+	require.NoError(t, err)
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(middleware.Telemetry())
+	r.GET("/test", func(c *gonic.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	checkLog(t, "info")
+}
+
 func TestGinOTelMiddleware(t *testing.T) {
 	initializeTests(t)
 	defer resetTests()
@@ -80,7 +120,7 @@ func TestGinOTelMiddleware(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	
+
 	r.Use(metricsMiddleware, tracingMiddleware)
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
