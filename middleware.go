@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/twistingmercury/telemetry/v2/logging"
+	"github.com/twistingmercury/telemetry/v2/tracing"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,8 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mileusna/useragent"
 
-	"github.com/twistingmercury/telemetry/logging"
-	"github.com/twistingmercury/telemetry/tracing"
 	otelCodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -115,7 +115,7 @@ func Telemetry() gin.HandlerFunc {
 		c.Next()
 		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
 
-		logRequest(span.SpanContext(), c, elapsedTime)
+		logRequest(c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
 
@@ -198,21 +198,29 @@ func GetTracingMiddleware(options TracingOptions) (gin.HandlerFunc, error) {
 			return
 		}
 
-		var elapsedTime float64
-
 		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
 		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
 		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
 		c.Request = c.Request.WithContext(childCtx)
 		defer span.End()
 
+		c.Next()
+
+		code, desc := SpanStatus(c.Writer.Status())
+		span.SetStatus(code, desc)
+	}, nil
+}
+
+// GetLoggingMiddleware initializes and returns logging middleware
+func GetLoggingMiddleware(options LoggingOptions) (gin.HandlerFunc, error) {
+	return func(c *gin.Context) {
+		var elapsedTime float64
+
 		before := time.Now()
 		c.Next()
 		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
 
-		logRequest(span.SpanContext(), c, elapsedTime)
-		code, desc := SpanStatus(c.Writer.Status())
-		span.SetStatus(code, desc)
+		logRequest(c, elapsedTime)
 	}, nil
 }
 
@@ -254,23 +262,22 @@ func SpanStatus(status int) (code otelCodes.Code, desc string) {
 	return
 }
 
-func logRequest(spanCtx oteltrace.SpanContext, c *gin.Context, elapsedTime float64) {
+func logRequest(c *gin.Context, elapsedTime float64) {
+	ctx := c.Request.Context()
 	defer func() {
 		if r := recover(); r != nil {
-			logging.Error(errors.New("panic in logging middleware"),
+			logging.Error(ctx, errors.New("panic in logging middleware"),
 				"panic in logging middleware", logging.KeyValue{Key: "panic", Value: r})
 		}
 	}()
 
 	status := c.Writer.Status()
 	args := map[string]any{
-		HttpMethod:          c.Request.Method,
-		HttpPath:            c.Request.URL.Path,
-		HttpRemoteAddr:      c.Request.RemoteAddr,
-		HttpStatus:          status,
-		HttpLatency:         fmt.Sprintf("%fms", elapsedTime),
-		logging.TraceIDAttr: spanCtx.TraceID().String(),
-		logging.SpanIDAttr:  spanCtx.SpanID().String(),
+		HttpMethod:     c.Request.Method,
+		HttpPath:       c.Request.URL.Path,
+		HttpRemoteAddr: c.Request.RemoteAddr,
+		HttpStatus:     status,
+		HttpLatency:    fmt.Sprintf("%fms", elapsedTime),
 	}
 
 	scheme := Http
@@ -296,11 +303,11 @@ func logRequest(spanCtx oteltrace.SpanContext, c *gin.Context, elapsedTime float
 	logAttribs := fromMap(args)
 	if status > 499 || c.Errors.Last() != nil {
 		errs := strings.Join(c.Errors.Errors(), ";")
-		logging.Error(errors.New(errs), "request failed", logAttribs...)
+		logging.Error(ctx, errors.New(errs), "request failed", logAttribs...)
 		return
 	}
 
-	logging.Info("request", logAttribs...)
+	logging.Info(ctx, "request successful", logAttribs...)
 }
 
 // ParseHeaders parses the headers and returns a map of attribs.

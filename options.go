@@ -35,3 +35,9 @@ type MetricsOptions struct {
 }
 
 type MetricsOption func(*MetricsOptions)
+
+type LoggingOptions struct {
+	// for future use
+}
+
+type LoggingOption func(*LoggingOptions)
