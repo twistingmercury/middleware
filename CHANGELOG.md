@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0]  - 2024-07-10
 
 ### Added
-- Added `GetTracingMiddleware` func that initializes and returns tracing middleware
-- Added `GetMetricsMiddleware` func that initializes and returns metrics middleware
-- Added `GetLoggingMiddleware` func that initializes and returns logging middleware
+- Added `OtelTracing` func that returns the Otel tracing middleware
+- Added `PrometheusMetrics` func that returns the Prometheus metrics middleware
+- Added `Logging` func that returns the logging middleware
 - updated README.md to correct `go get` cmd
 - updated packages to latest version
 
