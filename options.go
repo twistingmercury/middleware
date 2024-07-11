@@ -8,6 +8,7 @@ type TracingOptions struct {
 
 type TracingOption func(*TracingOptions)
 
+// WithExcludedPaths allows to filter out URL paths, so that they are not traced.
 func WithExcludedPaths(paths []string) TracingOption {
 	return func(opt *TracingOptions) {
 		if opt.ExcludedPaths == nil {
@@ -20,6 +21,7 @@ func WithExcludedPaths(paths []string) TracingOption {
 	}
 }
 
+// MakeTracingOptions builds [TracingOptions] based on the provided options.
 func MakeTracingOptions(opts ...TracingOption) TracingOptions {
 	opt := TracingOptions{}
 
