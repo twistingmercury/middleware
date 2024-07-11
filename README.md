@@ -21,12 +21,11 @@ go get github.com/twistingmercury/middleware
 
 Please visit [middleware-example](https://github.com/twistingmercury/middleware-example) for a comprehensive example of how to utilize both the middleware as well as the [twistingmercury/telemetry](https://github.com/twistingmercury/telemetry) package.
 
-1. [Initialize the logging package.
+1. Initialize the logging package.
 2. Initialize the metrics package.
 3. Invoke `metrics.Publish()`
 4. Initialize the tracing package.
-5. Initialize the middleare package.
-6. Create a gin router and invoke `gin.Use(middleware.Telemetry())`.
+5. Create a gin router and invoke `gin.Use(middleware.PrometheusMetrics(..), middleware.OtelTracing(..), middleware.Logging(..))`.
 
 After that, you can define your routes and handlers as usual, and the middleware will automatically instrument and trace the incoming requests.
 
@@ -42,7 +41,7 @@ The Gin Middleware package generates the following telemetry data for the gin ha
 
 ### Telemetry collection
 
-* Logs: Logs are written to stdout.
+* Logs: Logs are written to stdout and correlated with traces if tracing middleware is used.
 * Traces: Traces are sent to the configured exporter. In a production environment, you'd create gRPC exporter and send the data to an OTel collector.
 * Metrics: Metrics are exposed by default over http on port 9090, i.e., `http://[my-api]:9090/metrics`
 

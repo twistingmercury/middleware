@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/twistingmercury/telemetry/v2/logging"
+	"github.com/twistingmercury/telemetry/v2/tracing"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,8 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mileusna/useragent"
 
-	"github.com/twistingmercury/telemetry/logging"
-	"github.com/twistingmercury/telemetry/tracing"
 	otelCodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -69,6 +69,8 @@ var (
 )
 
 // Initialize preps the middleware.
+//
+// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware which do not require separate initialization.
 func Initialize(registry *prometheus.Registry, namespace, apiname string) error {
 	switch {
 	case registry == nil:
@@ -87,34 +89,9 @@ func Initialize(registry *prometheus.Registry, namespace, apiname string) error 
 	return nil
 }
 
-// Metrics provides the prometheus metrics that are to be tracked.
-func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
-	concurentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
-	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: nspace,
-		Name:      concurentCallsName,
-		Help:      "the count of concurrent calls to the APIs, grouped by path and http method"},
-		[]string{pathLabel, methodLabel})
-
-	totalCallsName := normalize(fmt.Sprintf("%s_total_calls", apiName))
-	totalCalls := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: nspace,
-		Name:      totalCallsName,
-		Help:      "The count of all call to the API, grouped by path, http method, and status code"},
-		[]string{pathLabel, methodLabel, statusLabel})
-
-	callDurationName := normalize(fmt.Sprintf("%s_call_duration", apiName))
-	callDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: nspace,
-		Name:      callDurationName,
-		Help:      "The duration in milliseconds calls to the API, grouped by path, http method, and status code",
-		Buckets:   prometheus.ExponentialBuckets(0.1, 1.5, 5)},
-		[]string{pathLabel, methodLabel, statusLabel})
-
-	return concurrentCalls, totalCalls, callDuration
-}
-
 // Telemetry returns middleware that will instrument and trace incoming requests.
+//
+// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware to get separated middleware for metrics, tracing, and logging.
 func Telemetry() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -138,11 +115,112 @@ func Telemetry() gin.HandlerFunc {
 		c.Next()
 		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
 
-		logRequest(span.SpanContext(), c, elapsedTime)
+		logRequest(c, elapsedTime)
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
 
 		statusCode = strconv.Itoa(c.Writer.Status())
+	}
+}
+
+// PrometheusMetrics returns the metrics middleware used by the Prometheus software.
+func PrometheusMetrics(registry *prometheus.Registry, namespace string, apiname string, options MetricsOptions) gin.HandlerFunc {
+	switch {
+	case registry == nil:
+		panic("registry is nil")
+	case strings.TrimSpace(namespace) == "":
+		panic("namespace is empty")
+	case strings.TrimSpace(apiname) == "":
+		panic("apiname is empty")
+	}
+
+	reg = registry
+	nspace = namespace
+	apiName = apiname
+
+	concurrentCalls, totalCalls, callDuration = Metrics()
+	reg.MustRegister(concurrentCalls, totalCalls, callDuration)
+
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		var elapsedTime float64
+		var statusCode string
+		concurrentCalls.WithLabelValues(path, method).Inc()
+		defer func() {
+			concurrentCalls.WithLabelValues(path, method).Dec()
+			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
+			totalCalls.WithLabelValues(path, method, statusCode).Inc()
+		}()
+
+		before := time.Now()
+		c.Next()
+		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
+	}
+}
+
+// Metrics provides the prometheus metrics that are to be tracked.
+func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.HistogramVec) {
+	concurrentCallsName := normalize(fmt.Sprintf("%s_concurrent_calls", apiName))
+	concurrentCalls := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: nspace,
+		Name:      concurrentCallsName,
+		Help:      "the count of concurrent calls to the APIs, grouped by path and http method"},
+		[]string{pathLabel, methodLabel})
+
+	totalCallsName := normalize(fmt.Sprintf("%s_total_calls", apiName))
+	totalCalls := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: nspace,
+		Name:      totalCallsName,
+		Help:      "The count of all call to the API, grouped by path, http method, and status code"},
+		[]string{pathLabel, methodLabel, statusLabel})
+
+	callDurationName := normalize(fmt.Sprintf("%s_call_duration", apiName))
+	callDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: nspace,
+		Name:      callDurationName,
+		Help:      "The duration in milliseconds calls to the API, grouped by path, http method, and status code",
+		Buckets:   prometheus.ExponentialBuckets(0.1, 1.5, 5)},
+		[]string{pathLabel, methodLabel, statusLabel})
+
+	return concurrentCalls, totalCalls, callDuration
+}
+
+// OtelTracing returns the tracing middleware.
+func OtelTracing(options TracingOptions) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		_, pathFound := options.ExcludedPaths[strings.ToLower(path)]
+		if pathFound {
+			c.Next()
+			return
+		}
+
+		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
+		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
+		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
+		c.Request = c.Request.WithContext(childCtx)
+		defer span.End()
+
+		c.Next()
+
+		code, desc := SpanStatus(c.Writer.Status())
+		span.SetStatus(code, desc)
+	}
+}
+
+// Logging returns the logging middleware
+func Logging(options LoggingOptions) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var elapsedTime float64
+
+		before := time.Now()
+		c.Next()
+		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
+
+		logRequest(c, elapsedTime)
 	}
 }
 
@@ -184,23 +262,22 @@ func SpanStatus(status int) (code otelCodes.Code, desc string) {
 	return
 }
 
-func logRequest(spanCtx oteltrace.SpanContext, c *gin.Context, elapsedTime float64) {
+func logRequest(c *gin.Context, elapsedTime float64) {
+	ctx := c.Request.Context()
 	defer func() {
 		if r := recover(); r != nil {
-			logging.Error(errors.New("panic in logging middleware"),
+			logging.Error(ctx, errors.New("panic in logging middleware"),
 				"panic in logging middleware", logging.KeyValue{Key: "panic", Value: r})
 		}
 	}()
 
 	status := c.Writer.Status()
 	args := map[string]any{
-		HttpMethod:          c.Request.Method,
-		HttpPath:            c.Request.URL.Path,
-		HttpRemoteAddr:      c.Request.RemoteAddr,
-		HttpStatus:          status,
-		HttpLatency:         fmt.Sprintf("%fms", elapsedTime),
-		logging.TraceIDAttr: spanCtx.TraceID().String(),
-		logging.SpanIDAttr:  spanCtx.SpanID().String(),
+		HttpMethod:     c.Request.Method,
+		HttpPath:       c.Request.URL.Path,
+		HttpRemoteAddr: c.Request.RemoteAddr,
+		HttpStatus:     status,
+		HttpLatency:    fmt.Sprintf("%fms", elapsedTime),
 	}
 
 	scheme := Http
@@ -226,11 +303,11 @@ func logRequest(spanCtx oteltrace.SpanContext, c *gin.Context, elapsedTime float
 	logAttribs := fromMap(args)
 	if status > 499 || c.Errors.Last() != nil {
 		errs := strings.Join(c.Errors.Errors(), ";")
-		logging.Error(errors.New(errs), "request failed", logAttribs...)
+		logging.Error(ctx, errors.New(errs), "request failed", logAttribs...)
 		return
 	}
 
-	logging.Info("request ", logAttribs...)
+	logging.Info(ctx, "request successful", logAttribs...)
 }
 
 // ParseHeaders parses the headers and returns a map of attribs.

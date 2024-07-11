@@ -2,17 +2,19 @@ package middleware_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"github.com/rs/zerolog"
 	"github.com/twistingmercury/middleware"
-	"github.com/twistingmercury/telemetry/logging"
+	"github.com/twistingmercury/telemetry/v2/logging"
+	"github.com/twistingmercury/telemetry/v2/metrics"
+	"github.com/twistingmercury/telemetry/v2/tracing"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	gonic "github.com/gin-gonic/gin"
-	"github.com/twistingmercury/telemetry/metrics"
-	"github.com/twistingmercury/telemetry/tracing"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/stretchr/testify/assert"
@@ -44,7 +46,7 @@ func initializeTests(t *testing.T) {
 	err = tracing.Initialize(traceExporter, serviceName, serviceVersion, environment)
 	require.NoError(t, err)
 
-	err = metrics.Initialize(namespace, serviceName)
+	err = metrics.Initialize(context.TODO(), namespace, serviceName)
 	require.NoError(t, err)
 }
 
@@ -53,7 +55,43 @@ func resetTests() {
 	tbuffer.Reset()
 }
 
-func TestInitialize(t *testing.T) {
+func TestPrometheusMetricsWithEmptyRegistry(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("The code did not panic")
+		}
+	}()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(middleware.PrometheusMetrics(nil, namespace, serviceName, middleware.MetricsOptions{}))
+}
+
+func TestPrometheusMetricsWithEmptyNamespace(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("The code did not panic")
+		}
+	}()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(middleware.PrometheusMetrics(metrics.Registry(), "", serviceName, middleware.MetricsOptions{}))
+}
+
+func TestPrometheusMetricsWithEmptyServiceName(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("The code did not panic")
+		}
+	}()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(middleware.PrometheusMetrics(metrics.Registry(), namespace, "", middleware.MetricsOptions{}))
+}
+
+func TestDeprecatedInitialize(t *testing.T) {
 	var err error
 	initializeTests(t)
 	defer resetTests()
@@ -68,7 +106,7 @@ func TestInitialize(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestGinOTelMiddleware(t *testing.T) {
+func TestGinOTelDeprecatedTelemetry(t *testing.T) {
 	initializeTests(t)
 	defer resetTests()
 	err := middleware.Initialize(metrics.Registry(), namespace, serviceName)
@@ -90,10 +128,118 @@ func TestGinOTelMiddleware(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	checkLog(t)
+	checkLog(t, "info", true)
 }
 
-func checkLog(t *testing.T) {
+func TestGinOTelMiddleware(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+
+	r.Use(
+		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{}),
+		middleware.OtelTracing(middleware.TracingOptions{}),
+		middleware.Logging(middleware.LoggingOptions{}))
+	r.GET("/test", func(c *gonic.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	checkLog(t, "info", true)
+}
+
+func TestGinOTelMiddlewareLogging(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+
+	r.Use(middleware.Logging(middleware.LoggingOptions{}))
+	r.GET("/test", func(c *gonic.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	checkLog(t, "info", false)
+}
+
+func TestGinOTelMiddlewareInternalServerError(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(
+		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{}),
+		middleware.OtelTracing(middleware.TracingOptions{}),
+		middleware.Logging(middleware.LoggingOptions{}))
+
+	r.GET("/test", func(c *gonic.Context) {
+		c.Errors = []*gonic.Error{
+			{
+				Err:  errors.New("test error"),
+				Type: 0,
+				Meta: nil,
+			}}
+		c.Status(http.StatusInternalServerError)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	checkLog(t, "error", true)
+}
+
+func TestGinOTelMiddlewareTraceExcludedPath(t *testing.T) {
+	initializeTests(t)
+	defer resetTests()
+
+	gonic.SetMode(gonic.TestMode)
+	r := gonic.New()
+	r.Use(middleware.OtelTracing(middleware.NewTracingOptions(middleware.WithExcludedPaths([]string{"/test"}))))
+	r.GET("/test", func(c *gonic.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	if err != nil {
+		t.Fatalf("Couldn't create request: %v\n", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	logText := lbuffer.String()
+	require.Empty(t, logText)
+}
+
+func checkLog(t *testing.T, expectedLogLevel string, expectTracingAttrs bool) {
 	logText := lbuffer.String()
 	require.NotEmptyf(t, logText, "no logs found")
 
@@ -102,17 +248,23 @@ func checkLog(t *testing.T) {
 	err := json.Unmarshal([]byte(logText), &logEntry)
 	require.NoError(t, err)
 
-	require.Contains(t, logEntry, "otel.trace_id")
-	require.Len(t, logEntry["otel.trace_id"], 32)
-	require.NotEqual(t, logEntry["otel.trace_id"], oteltrace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	if expectTracingAttrs {
+		require.Contains(t, logEntry, "otel.trace_id")
+		require.Len(t, logEntry["otel.trace_id"], 32)
+		require.NotEqual(t, oteltrace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, logEntry["otel.trace_id"])
 
-	require.Contains(t, logEntry, "otel.span_id")
-	require.Len(t, logEntry["otel.span_id"], 16)
-	require.NotEqual(t, logEntry["otel.trace_id"], oteltrace.SpanID{0, 0, 0, 0, 0, 0, 0, 0})
-	require.Equal(t, logEntry["level"], "info")
-	require.Equal(t, logEntry["service"], serviceName)
-	require.Equal(t, logEntry["version"], serviceVersion)
-	require.Equal(t, logEntry["environment"], environment)
+		require.Contains(t, logEntry, "otel.span_id")
+		require.Len(t, logEntry["otel.span_id"], 16)
+		require.NotEqual(t, oteltrace.SpanID{0, 0, 0, 0, 0, 0, 0, 0}, logEntry["otel.trace_id"])
+	} else {
+		require.NotContains(t, logEntry, "otel.trace_id")
+		require.NotContains(t, logEntry, "otel.span_id")
+	}
+
+	require.Equal(t, expectedLogLevel, logEntry["level"])
+	require.Equal(t, serviceName, logEntry["service"])
+	require.Equal(t, serviceVersion, logEntry["version"])
+	require.Equal(t, environment, logEntry["environment"])
 }
 
 func TestSpanStatus(t *testing.T) {
