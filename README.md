@@ -21,15 +21,11 @@ go get github.com/twistingmercury/middleware
 
 Please visit [middleware-example](https://github.com/twistingmercury/middleware-example) for a comprehensive example of how to utilize both the middleware as well as the [twistingmercury/telemetry](https://github.com/twistingmercury/telemetry) package.
 
-1. [Initialize the logging package.
+1. Initialize the logging package.
 2. Initialize the metrics package.
 3. Invoke `metrics.Publish()`
 4. Initialize the tracing package.
-5. Retrieve tracing, metrics, and logging middleware by invoking:\
-`middleware.GetTracingMiddleware`,
-`middleware.GetMetricsMiddleware`,
-`middleware.GetLoggingMiddleware` respectively.
-6. Create a gin router and invoke `gin.Use(yourMetricsHandler, yourTracingHandler, yourLoggingHandler)`.
+5. Create a gin router and invoke `gin.Use(middleware.PrometheusMetrics(..), middleware.OtelTracing(..), middleware.Logging(..))`.
 
 After that, you can define your routes and handlers as usual, and the middleware will automatically instrument and trace the incoming requests.
 

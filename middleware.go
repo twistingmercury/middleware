@@ -123,15 +123,15 @@ func Telemetry() gin.HandlerFunc {
 	}
 }
 
-// GetMetricsMiddleware initializes and returns metrics middleware
-func GetMetricsMiddleware(registry *prometheus.Registry, namespace string, apiname string, options MetricsOptions) (gin.HandlerFunc, error) {
+// PrometheusMetrics returns the metrics middleware used by the Prometheus software.
+func PrometheusMetrics(registry *prometheus.Registry, namespace string, apiname string, options MetricsOptions) gin.HandlerFunc {
 	switch {
 	case registry == nil:
-		return nil, errors.New("registry is nil")
+		panic("registry is nil")
 	case strings.TrimSpace(namespace) == "":
-		return nil, errors.New("namespace is empty")
+		panic("namespace is empty")
 	case strings.TrimSpace(apiname) == "":
-		return nil, errors.New("apiname is empty")
+		panic("apiname is empty")
 	}
 
 	reg = registry
@@ -157,7 +157,7 @@ func GetMetricsMiddleware(registry *prometheus.Registry, namespace string, apina
 		before := time.Now()
 		c.Next()
 		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
-	}, nil
+	}
 }
 
 // Metrics provides the prometheus metrics that are to be tracked.
@@ -187,8 +187,8 @@ func Metrics() (*prometheus.GaugeVec, *prometheus.CounterVec, *prometheus.Histog
 	return concurrentCalls, totalCalls, callDuration
 }
 
-// GetTracingMiddleware initializes and returns tracing middleware
-func GetTracingMiddleware(options TracingOptions) (gin.HandlerFunc, error) {
+// OtelTracing returns the tracing middleware.
+func OtelTracing(options TracingOptions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
@@ -208,11 +208,11 @@ func GetTracingMiddleware(options TracingOptions) (gin.HandlerFunc, error) {
 
 		code, desc := SpanStatus(c.Writer.Status())
 		span.SetStatus(code, desc)
-	}, nil
+	}
 }
 
-// GetLoggingMiddleware initializes and returns logging middleware
-func GetLoggingMiddleware(options LoggingOptions) (gin.HandlerFunc, error) {
+// Logging returns the logging middleware
+func Logging(options LoggingOptions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var elapsedTime float64
 
@@ -221,7 +221,7 @@ func GetLoggingMiddleware(options LoggingOptions) (gin.HandlerFunc, error) {
 		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
 
 		logRequest(c, elapsedTime)
-	}, nil
+	}
 }
 
 // SpanStatus returns the OpenTelemetry statusLabel code as defined in
