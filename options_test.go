@@ -7,7 +7,7 @@ import (
 )
 
 func TestMakeTracingOptions(t *testing.T) {
-	opts := middleware.MakeTracingOptions(middleware.WithExcludedPaths([]string{"/test", "/TEST", "/test1"}))
+	opts := middleware.NewTracingOptions(middleware.WithExcludedPaths([]string{"/test", "/TEST", "/test1"}))
 
 	require.NotEmpty(t, opts)
 	require.NotEmpty(t, opts.ExcludedPaths)

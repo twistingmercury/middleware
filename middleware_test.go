@@ -221,7 +221,7 @@ func TestGinOTelMiddlewareTraceExcludedPath(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.OtelTracing(middleware.MakeTracingOptions(middleware.WithExcludedPaths([]string{"/test"}))))
+	r.Use(middleware.OtelTracing(middleware.NewTracingOptions(middleware.WithExcludedPaths([]string{"/test"}))))
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
 	})

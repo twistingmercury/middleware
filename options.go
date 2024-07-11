@@ -21,8 +21,8 @@ func WithExcludedPaths(paths []string) TracingOption {
 	}
 }
 
-// MakeTracingOptions builds [TracingOptions] based on the provided options.
-func MakeTracingOptions(opts ...TracingOption) TracingOptions {
+// NewTracingOptions builds [TracingOptions] based on the provided options.
+func NewTracingOptions(opts ...TracingOption) TracingOptions {
 	opt := TracingOptions{}
 
 	for _, apply := range opts {
