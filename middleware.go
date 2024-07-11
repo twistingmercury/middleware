@@ -70,7 +70,7 @@ var (
 
 // Initialize preps the middleware.
 //
-// Deprecated: use GetMetricsMiddleware and GetTracingMiddleware instead which have the initialization built-in.
+// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware which do not require separate initialization.
 func Initialize(registry *prometheus.Registry, namespace, apiname string) error {
 	switch {
 	case registry == nil:
@@ -91,7 +91,7 @@ func Initialize(registry *prometheus.Registry, namespace, apiname string) error 
 
 // Telemetry returns middleware that will instrument and trace incoming requests.
 //
-// Deprecated: use GetMetricsMiddleware and GetTracingMiddleware to get separated middleware for metrics and tracing.
+// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware to get separated middleware for metrics, tracing, and logging.
 func Telemetry() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
