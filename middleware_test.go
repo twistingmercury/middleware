@@ -64,7 +64,7 @@ func TestPrometheusMetricsWithEmptyRegistry(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(nil, namespace, serviceName, middleware.MetricsOptions{}))
+	r.Use(middleware.PrometheusMetrics(nil, namespace, serviceName))
 }
 
 func TestPrometheusMetricsWithEmptyNamespace(t *testing.T) {
@@ -76,7 +76,7 @@ func TestPrometheusMetricsWithEmptyNamespace(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(metrics.Registry(), "", serviceName, middleware.MetricsOptions{}))
+	r.Use(middleware.PrometheusMetrics(metrics.Registry(), "", serviceName))
 }
 
 func TestPrometheusMetricsWithEmptyServiceName(t *testing.T) {
@@ -88,47 +88,7 @@ func TestPrometheusMetricsWithEmptyServiceName(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(metrics.Registry(), namespace, "", middleware.MetricsOptions{}))
-}
-
-func TestDeprecatedInitialize(t *testing.T) {
-	var err error
-	initializeTests(t)
-	defer resetTests()
-
-	err = middleware.Initialize(nil, namespace, serviceName)
-	require.Error(t, err)
-
-	err = middleware.Initialize(metrics.Registry(), "", serviceName)
-	require.Error(t, err)
-
-	err = middleware.Initialize(metrics.Registry(), namespace, " ")
-	require.Error(t, err)
-}
-
-func TestGinOTelDeprecatedTelemetry(t *testing.T) {
-	initializeTests(t)
-	defer resetTests()
-	err := middleware.Initialize(metrics.Registry(), namespace, serviceName)
-	require.NoError(t, err)
-
-	gonic.SetMode(gonic.TestMode)
-	r := gonic.New()
-	r.Use(middleware.Telemetry())
-	r.GET("/test", func(c *gonic.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	req, err := http.NewRequest(http.MethodGet, "/test", nil)
-	if err != nil {
-		t.Fatalf("Couldn't create request: %v\n", err)
-	}
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	checkLog(t, "info", true)
+	r.Use(middleware.PrometheusMetrics(metrics.Registry(), namespace, ""))
 }
 
 func TestGinOTelMiddleware(t *testing.T) {
@@ -139,9 +99,9 @@ func TestGinOTelMiddleware(t *testing.T) {
 	r := gonic.New()
 
 	r.Use(
-		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{}),
-		middleware.OtelTracing(middleware.TracingOptions{}),
-		middleware.Logging(middleware.LoggingOptions{}))
+		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName),
+		middleware.OtelTracing(),
+		middleware.Logging())
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -165,7 +125,7 @@ func TestGinOTelMiddlewareLogging(t *testing.T) {
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
 
-	r.Use(middleware.Logging(middleware.LoggingOptions{}))
+	r.Use(middleware.Logging())
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -189,9 +149,9 @@ func TestGinOTelMiddlewareInternalServerError(t *testing.T) {
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
 	r.Use(
-		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName, middleware.MetricsOptions{}),
-		middleware.OtelTracing(middleware.TracingOptions{}),
-		middleware.Logging(middleware.LoggingOptions{}))
+		middleware.PrometheusMetrics(metrics.Registry(), namespace, serviceName),
+		middleware.OtelTracing(),
+		middleware.Logging())
 
 	r.GET("/test", func(c *gonic.Context) {
 		c.Errors = []*gonic.Error{
@@ -221,7 +181,7 @@ func TestGinOTelMiddlewareTraceExcludedPath(t *testing.T) {
 
 	gonic.SetMode(gonic.TestMode)
 	r := gonic.New()
-	r.Use(middleware.OtelTracing(middleware.NewTracingOptions(middleware.WithExcludedPaths([]string{"/test"}))))
+	r.Use(middleware.OtelTracing("/test"))
 	r.GET("/test", func(c *gonic.Context) {
 		c.Status(http.StatusOK)
 	})
