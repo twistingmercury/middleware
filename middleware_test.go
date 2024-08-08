@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
-	"github.com/twistingmercury/middleware"
+	"github.com/twistingmercury/middleware/v2"
 	"github.com/twistingmercury/telemetry/v2/logging"
 	"github.com/twistingmercury/telemetry/v2/metrics"
 	"github.com/twistingmercury/telemetry/v2/tracing"
@@ -56,39 +57,18 @@ func resetTests() {
 }
 
 func TestPrometheusMetricsWithEmptyRegistry(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("The code did not panic")
-		}
-	}()
-
-	gonic.SetMode(gonic.TestMode)
-	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(nil, namespace, serviceName))
+	var registry *prometheus.Registry
+	assert.Panics(t, func() { middleware.PrometheusMetrics(registry, "namespace", serviceName) })
 }
 
 func TestPrometheusMetricsWithEmptyNamespace(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("The code did not panic")
-		}
-	}()
-
-	gonic.SetMode(gonic.TestMode)
-	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(metrics.Registry(), "", serviceName))
+	var registry = new(prometheus.Registry)
+	assert.Panics(t, func() { middleware.PrometheusMetrics(registry, "", serviceName) })
 }
 
 func TestPrometheusMetricsWithEmptyServiceName(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("The code did not panic")
-		}
-	}()
-
-	gonic.SetMode(gonic.TestMode)
-	r := gonic.New()
-	r.Use(middleware.PrometheusMetrics(metrics.Registry(), namespace, ""))
+	var registry = new(prometheus.Registry)
+	assert.Panics(t, func() { middleware.PrometheusMetrics(registry, "namespace", "") })
 }
 
 func TestGinOTelMiddleware(t *testing.T) {
@@ -416,4 +396,52 @@ func TestParseHeaders(t *testing.T) {
 			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
+}
+
+func TestContainsPath(t *testing.T) {
+	exclusions := []string{"/test/1", "/test/3", "/test/5"}
+	inclusions := []string{"/test/2", "/test/4", "/test/6"}
+
+	for _, ex := range exclusions {
+		result := middleware.ContainsPath(exclusions, ex)
+		assert.True(t, result)
+	}
+
+	for _, in := range inclusions {
+		result := middleware.ContainsPath(exclusions, in)
+		assert.False(t, result)
+	}
+}
+
+func TestNormalize(t *testing.T) {
+	type testCase struct {
+		target   string
+		expected string
+	}
+	const expected = "this_is_a_target"
+	testCases := []testCase{
+		{"this  is a TARGET", expected},
+		{"this-is-a:target", expected},
+		{"this::is::a-target", expected},
+	}
+	for _, tc := range testCases {
+		results := middleware.Normalize(tc.target)
+		assert.Equal(t, tc.expected, results)
+	}
+}
+
+func TestFromMap(t *testing.T) {
+	target := make(map[string]any)
+	target["key1"] = "value1"
+	target["fruit"] = "orange"
+	target["color"] = "blue"
+
+	expected := make([]logging.KeyValue, len(target))
+	expected[0] = logging.KeyValue{Key: "key1", Value: "value1"}
+	expected[1] = logging.KeyValue{Key: "fruit", Value: "orange"}
+	expected[2] = logging.KeyValue{Key: "color", Value: "blue"}
+
+	results := middleware.FromMap(target)
+	assert.Equal(t, expected, results)
+
 }

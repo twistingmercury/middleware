@@ -67,61 +67,6 @@ var (
 	nspace          string
 )
 
-//// Initialize preps the middleware.
-////
-//// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware which do not require separate initialization.
-//func Initialize(registry *prometheus.Registry, namespace, apiname string) error {
-//	switch {
-//	case registry == nil:
-//		return errors.New("registry is nil")
-//	case strings.TrimSpace(namespace) == "":
-//		return errors.New("namespace is empty")
-//	case strings.TrimSpace(apiname) == "":
-//		return errors.New("apiname is empty")
-//	}
-//
-//	reg = registry
-//	nspace = namespace
-//	apiName = apiname
-//	concurrentCalls, totalCalls, callDuration = Metrics()
-//	reg.MustRegister(concurrentCalls, totalCalls, callDuration)
-//	return nil
-//}
-
-// Telemetry returns middleware that will instrument and trace incoming requests.
-//
-// Deprecated: use GetMetricsMiddleware, GetTracingMiddleware, and GetLoggingMiddleware to get separated middleware for metrics, tracing, and logging.
-//func Telemetry() gin.HandlerFunc {
-//	return func(c *gin.Context) {
-//		path := c.Request.URL.Path
-//		method := c.Request.Method
-//		var elapsedTime float64
-//		var statusCode string
-//		concurrentCalls.WithLabelValues(path, method).Inc()
-//		defer func() {
-//			concurrentCalls.WithLabelValues(path, method).Dec()
-//			callDuration.WithLabelValues(path, method, statusCode).Observe(elapsedTime)
-//			totalCalls.WithLabelValues(path, method, statusCode).Inc()
-//		}()
-//
-//		spanName := fmt.Sprintf("%s: %s", c.Request.Method, c.Request.URL.Path)
-//		parentCtx := tracing.ExtractContext(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
-//		childCtx, span := tracing.Start(parentCtx, spanName, oteltrace.SpanKindServer, semconv.HTTPRoute(spanName))
-//		c.Request = c.Request.WithContext(childCtx)
-//		defer span.End()
-//
-//		before := time.Now()
-//		c.Next()
-//		elapsedTime = float64(time.Since(before)) / float64(time.Millisecond)
-//
-//		logRequest(c, elapsedTime)
-//		code, desc := SpanStatus(c.Writer.Status())
-//		span.SetStatus(code, desc)
-//
-//		statusCode = strconv.Itoa(c.Writer.Status())
-//	}
-//}
-
 // Logging returns the logging middleware
 func Logging(excludePaths ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -388,10 +333,9 @@ func containsPath(paths []string, exclusion string) bool {
 }
 
 func normalize(name string) string {
-	r := regexp.MustCompile(`\s+`)
-	name = r.ReplaceAllString(name, "_")
-	r = regexp.MustCompile(`[./:_-]`)
-	return r.ReplaceAllString(strings.ToLower(name), "_")
+	r := regexp.MustCompile(`[\s./:_-]+`)
+	name = r.ReplaceAllString(strings.ToLower(name), "_")
+	return name
 }
 
 func fromMap(m map[string]any) []logging.KeyValue {

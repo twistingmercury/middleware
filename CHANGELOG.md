@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - unit tests for private func `middleware.containsPath`
 - unit tests for private func `middleware.fromMap`
 
+### Updated
+- package dependencies
+
 ### Removed
 - deprecated func `middleware.Initialize`
 - deprecated func `middleware.Tracing`
