@@ -442,6 +442,6 @@ func TestFromMap(t *testing.T) {
 	expected[2] = logging.KeyValue{Key: "color", Value: "blue"}
 
 	results := middleware.FromMap(target)
-	assert.Equal(t, expected, results)
+	assert.ElementsMatch(t, expected, results)
 
 }
